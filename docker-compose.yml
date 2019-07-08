@@ -1,0 +1,32 @@
+# docker-compose.yml
+version: '3.7'
+services:
+  influx-stress:
+    build: influx-stress/.
+    command: influx-stress
+  influxdb:
+    image: influxdb
+    container_name: influxdb
+    ports:
+      - 8086:8086
+      - 8082:8082
+    volumes:
+      - ./influxdb/config/:/etc/influxdb/
+  influxdb-cli:
+    image: influxdb
+    entrypoint:
+      - influx
+      - -host
+      - influxdb
+    links:
+      - influxdb
+  results-influxdb:
+    image: influxdb
+    entrypoint: >
+      sh -c "influx -host influxdb -database results -execute \
+            'select * from passed_sum; select sum(value) from passed'"
+    links:
+      - influxdb
+
+volumes:
+  influxdb:
