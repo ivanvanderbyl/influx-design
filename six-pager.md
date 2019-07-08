@@ -1,22 +1,18 @@
 # Design Goals
 
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
-
 We want to achieve superior analytics of time series data with the following characteristics.
 
 ## Aggregation on read
 
-We want to minimize aggregation on write, and maximise aggregation on read where practical. In practice, aggregation on read will occur in InfluxDB during queries with InfluxQL and/or Flux.
+We want to minimize aggregation on write, and maximise aggregation on read. In practice, aggregation on read will occur in InfluxDB during queries with InfluxQL and/or Flux.
 
-The client (Flow) should not be expected to aggregate time series data. This will minimise data round trips / data sent over the wire and maximise the functionality of InfluxDB itself.
+The client (Flow) should not be expected to aggregate time series data. This will minimise round trips / data sent over the wire make most use of InfluxDB.
 
 ## Aggregation on write
 
-It is not practical to write raw point data to InfluxDB due to high write volumes and rates from the tools themselves, hence we need to accept a minimum form of aggregation on write.
+It is not practical to write raw point data to InfluxDB due to high write volumes and rates from the tools, hence we need to compromise with some aggregation on write.
 
-Aggregation occurs on Grid Nodes via Kapacitor, as part of their current UDP stream processing (tool emits data to Kapacitor via UDP).
-
-Further aggregation will occur on InfluxDB, as part of pipe line processing (Drain, Pipe) and continuous queries in order to maximise efficiency of write throughput, retention policy and shard management.
+Initial aggregation will occur on Grid Nodes using Kapacitor. Further aggregation will occur on InfluxDB, as part of processing (Drain and Pipe) and continuous queries in order to maximise efficiency of write throughput and data management.
 
 ## Aggregations
 
@@ -33,52 +29,51 @@ We will provide the following aggregations:
 
 Aggregations such as min, max, count and sum should 100% accurate. Examples include:
 
-- min response time = 2,051 ms
-- max concurrency = 1,000 users
-- count passed = 4,069 transactions
-- sum network = 492,092 bytes received
+- **min** response time = 2,051 ms
+- **max** concurrency = 1,000 users
+- **count** passed = 4,069 transactions
+- **sum** network = 492,092 bytes received
 
-These aggregations will occur on Grid Nodes via Kapacitor and be accurately written into InfluxDB.
+Aggregations such as the **mean** will include standard error (standard deviation of its sampling distribution), and further aggregations of the same measurements will decrease accuracy and precision of results.
 
-Aggregations such as the mean will include standard error (standard deviation of its sampling distribution), and further aggregations of the same measurements will decrease accuracy and precision of results.
+To mitigate this, we will:
 
-To assist with this, we will write higher precision aggregates for new data (e.g. 1s resolution for last 30 days) and move to lower precision aggregates for older data (e.g.15s resolution greater than 12 months). For aggregates such as mean we will also write standard deviation. Examples include:
+-  write **stddev** with the mean
+-  write higher precision resolution (1s) for recent floods
 
-- mean response time = 2,324 ms over 1s period
-- stddev response time = 2,324 ms over 1s period
+Examples include:
 
-Aggregations such as histograms will approximate the cumulative distribution of a data set by counting data frequencies for a list of bins.
+- **mean** response time = 2,324 ms over 1s period
+- **stddev** response time = 2,324 ms over 1s period
 
-Aggregations such as quantiles will write records from an input table with _values that fall within a specified quantile (e.g. 0.95) using the `estimate_tdigest` to output non-null records with values that fall within the specified quantile.
+Aggregations such as **histograms** will approximate the cumulative distribution of a data set by counting data frequencies for a list of bins.
+
+Aggregations such as **quantiles** will write records with values that fall within a specified quantile (e.g. 0.95) using the `estimate_tdigest` to output non-null values that fall within the specified quantile.
 
 ## Minimise responsibility of the tool
 
-We want to minimise the responsibility of tool e.g. JMeter in terms of aggregation and labelling so that it emits the minimum amount of data needed to be consumed by Flood.
+We want to minimise responsibility of the tool plugins (e.g. JMeter) in terms of aggregation (and tagging) so that it emits the minimum amount of data needed to be consumed by Kapacitor.
 
-Ideally the tool should emit 'common' measurements such as response time, concurrency, passed, failed and traces. Measurements are typically emitted at the test step level, with the exception of concurrency, which is emitted at the test case level.
+The tool will emit measurements such as response time, concurrency, passed, failed and objects (traces). Measurements will be emitted at the test step level, with the exception of concurrency, which is emitted at the test case level.
 
-The tool should not be concerned with other tag sets related to operation of the tool itself. This is the responsibility of the aggregation point, typically the grid node.
+The tool should not be concerned with other tags or fields related to operation of the Grid Node itself. This will be the responsibility of the Grid Node (Kapacitor).
 
 ### Provide alternative ways to emit data
 
-We want to provide alternative options for the tool to emit data, aside from the current UDP streams, to increase the options available to customers for emitting data. For example, uploading a test result as a file or the ability read a file descriptor streams (stdin, stdout, stderr).
+We want to provide alternative ways for the tool to emit data, aside from the current UDP streams. This will make it easier for future tools to be integrated with Grid Nodes. For example, uploading a result file or reading from a file descriptor / stream (stdin, stdout).
 
 ## Defined series
 
-Measurements are produced by the tool (JMeter, Gatling, Element etc), aggregated by the node (Kapacitor) and then written via a pipe line (Drain, Pipe) to the time series database (InfluxDB).
-
-Measurements are scoped to the individual test step / transaction level, and also at the test case level for any grid node. Series are the collection of data in the InfluxDB that share a measurement, tag set, and retention policy.
-
-Series cardinality are the number of unique database, measurement, tag set, and field key combinations in InfluxDB.
+Series are the collection of data in InfluxDB that share a measurement, tag set, and retention policy.
 
 Defined series are as follows:
 
-### Test step series
+### Test step originated series
 
 - **response_time**: mean of elapsed time
   - tags:
-    - label_id: _string_ sequential label ID of step
-    - type: _string_ step,stepWithThinkTime, network, timeToFirstInteractive, timeToFirstByte
+    - label: _string_ sequential label ID of step
+    - type: _string_ step, [stepWithThinkTime, network, timeToFirstByte, timeToFirstInteractive]
   - fields:
     - value: _float_ time in milliseconds
 - **passed**: count of passed
@@ -92,22 +87,22 @@ Defined series are as follows:
   - fields:
     - value: _int_ total count
 
-### Test case series
+### Test case originated series
 
 - **concurrency**: count of active users
   - fields:
     - value: _int_ total count
 
-## Grid node series
+## Grid Node originated series
 
-- **network_rx**: sum of network received bytes
+- **network_rx**: sum of network received bytes (sourced from hydrometer)
   - fields:
     - value: _int_ total bytes
-- **network_tx**: sum of network transmitted bytes
+- **network_tx**: sum of network transmitted bytes (sourced from hydrometer)
   - fields:
     - value: _int_ total bytes
 
-Grid nodes (Kapacitor) is responsible for additive tag sets related to operation of the tool itself. These will include:
+Grid Nodes (Kapacitor) are responsible for additive tag sets related to operation of the Grid Node itself, appended and grouped for all series. These will include:
 
   - tags:
     - **account**: _string_ primary ID of account
@@ -119,8 +114,11 @@ Grid nodes (Kapacitor) is responsible for additive tag sets related to operation
 
 ## Derived series
 
-Series can also be derived from tool / grid produced measurements, to facilitate easier/faster querying or produce transformations useful to the UI. These will be executed as continuous queries on InfluxDB
+Series can also be derived from other measurements, to facilitate easier/faster querying or produce transformations useful to the client. These will be executed as continuous queries on InfluxDB:
 
+  - **concurrency_max**: the sum of the maximum number of concurrent users for the flood, grouped by grid, region
+    - fields
+      - value: _int_
   - **transaction_rate**: non negative derivative expressed as transactions per second, based on sum of passed and failed transactions
      - fields
        - value: _float_
@@ -136,9 +134,15 @@ Series can also be derived from tool / grid produced measurements, to facilitate
 
 ## Out of scope series
 
-Out of scope for this design document, but under consideration, are series / measurements with high dimensionality / cardinality, such as server side monitoring and/or tracing.
+Out of scope are series / measurements with high dimensionality / cardinality, such as server side monitoring and/or tracing.
 
-Handling of these series will be covered in another design document and most likely include their own schema design and data management.
+Handling of these series will be covered in another design document and most likely include their own database, schema design and data processing / management.
+
+## Series cardinality
+
+Series cardinality are the number of unique database, measurement, tag set, and field key combinations in InfluxDB. Best efforts are made (through normalizing tag sets) to reduce cardinality of series.
+
+We will need to test planned limits / constraints on series cardinality for specific tags (labels).
 
 ## Schema Design
 
@@ -154,12 +158,12 @@ That is:
 
 ## Precision
 
-A [WindowNode](https://docs.influxdata.com/kapacitor/v1.5/nodes/window_node/#sidebar) covers the time range of the aggregation at the GridNode. Historically we have used a WindowNode with a period of 15s. For the purpose of this document, 15s is considered low precision.
+A [WindowNode](https://docs.influxdata.com/kapacitor/v1.5/nodes/window_node/#sidebar) covers the time range of the aggregation at the GridNode. Historically we have used a WindowNode with a period of 15s.
 
 A design goal for this epic is to write higher precision data to InfluxDB, for the following reasons:
 
-- Customers expect near real time results for live floods, 15 seconds is perceptibly long.
-- Customers want high precision data for running or recent floods, and can handle lower precision data for older floods.
+- Customers expect near real time results for live floods, 15 seconds is perceptibly too long.
+- Customers want high precision data for running or recent floods, but can tolerate lower precision data for older floods.
 
 In general:
 
@@ -167,16 +171,32 @@ In general:
 - Shard groups should each contain more than 100,000 points per shard group
 - Shard groups should each contain more than 1,000 points per series
 
-We are aiming for the following period, reternion policy and shard group durations:
+We are aiming for the following period, retention policy and shard group durations:
 
 | Alias | Period | RP Duration | Shard Group Duration |
 |-------|-------:|------------:|---------------------:|
-| Hot   | 1s     | 1mo         | 7d                   |
-| Warm  | 15s    | 12mo        | 26w                  |
-| Cold  | 30s    | 36mo        | 52w                  |
+| Hot   | 1s     | 4w          | 7d                   |
+| Warm  | 15s    | 26w         | 4w                   |
+| Cold  | 60s    | 156mo       | 52w                  |
+
+This will store 1s data for 4 weeks, 15s data for 6 months and 60s data for 3 years.
 
 ```
 CREATE RETENTION POLICY "hot" ON "results" DURATION 4w REPLICATION 1 DEFAULT
 CREATE RETENTION POLICY "warm" ON "results" DURATION 24w REPLICATION 1
 CREATE RETENTION POLICY "cold" ON "results" DURATION 52w REPLICATION 1
+
+CREATE CONTINUOUS QUERY "cq_15" ON "results" BEGIN
+  SELECT mean("response_time"), max()
+  INTO "warm"."warm_results"
+  FROM "results"
+  GROUP BY time(15s)
+END
+
+CREATE CONTINUOUS QUERY "cq_60" ON "results" BEGIN
+  SELECT mean("response_time"), max()
+  INTO "cold"."cold_results"
+  FROM "results"
+  GROUP BY time(60s)
+END
 ```
