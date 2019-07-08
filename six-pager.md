@@ -64,43 +64,47 @@ We want to provide alternative ways for the tool to emit data, aside from the cu
 
 ## Defined series
 
-Series are the collection of data in InfluxDB that share a measurement, tag set, and retention policy.
+Series are the collection of data in InfluxDB that share a measurement, tag set, and retention policy. Series names will indicate what type of aggregation has already been applied at write as a _suffix.
 
 Defined series are as follows:
 
 ### Test step originated series
 
-- **response_time**: mean of elapsed time
+- **response_time_mean**: mean of elapsed time
   - tags:
     - label: _string_ sequential label ID of step
     - type: _string_ step, [stepWithThinkTime, network, timeToFirstByte, timeToFirstInteractive]
   - fields:
     - value: _float_ time in milliseconds
-- **passed**: count of passed
+- **response_time_max**: max of elapsed time
+  - tags: as above
+  - fields:
+    - value: _float_ time in milliseconds
+- **passed_count**: count of passed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
-    - value: _int_ total count
-- **failed**: count of failed
+    - value: _int_ count passed
+- **failed_count**: count of failed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
-    - value: _int_ total count
+    - value: _int_ count failed
 
 ### Test case originated series
 
-- **concurrency**: count of active users
+- **concurrency_max**: max of active users
   - fields:
-    - value: _int_ total count
+    - value: _int_ max users
 
 ## Grid Node originated series
 
-- **network_rx**: sum of network received bytes (sourced from hydrometer)
+- **network_rx_sum**: sum of network received bytes (sourced from hydrometer)
   - fields:
-    - value: _int_ total bytes
-- **network_tx**: sum of network transmitted bytes (sourced from hydrometer)
+    - value: _int_ sum bytes
+- **network_tx_sum**: sum of network transmitted bytes (sourced from hydrometer)
   - fields:
-    - value: _int_ total bytes
+    - value: _int_ sum bytes
 
 Grid Nodes (Kapacitor) are responsible for additive tag sets related to operation of the Grid Node itself, appended and grouped for all series. These will include:
 
@@ -116,21 +120,33 @@ Grid Nodes (Kapacitor) are responsible for additive tag sets related to operatio
 
 Series can also be derived from other measurements, to facilitate easier/faster querying or produce transformations useful to the client. These will be executed as continuous queries on InfluxDB:
 
-  - **concurrency_max**: the sum of the maximum number of concurrent users for the flood, grouped by grid, region
+  - **concurrency_sum_max**: the sum of the maximum number of concurrent users for the flood, grouped by grid, region
     - fields
-      - value: _int_
-  - **transaction_rate**: non negative derivative expressed as transactions per second, based on sum of passed and failed transactions
+      - value: _int_ sum users
+  - **transaction_rate**: non negative derivative expressed as rate (transactions per second), based on sum of passed and failed transactions
      - fields
-       - value: _float_
-  - **error_rate**: non negative derivative expressed as transactions per second, based on sum of failed transactions
+       - value: _float_ tps
+  - **error_rate**: non negative derivative expressed as rate (transactions per second), based on sum of failed transactions
     - fields
-      - value: _float_
- - **network_rx_rate**: non negative derivative of network received, expressed as bits per second
- - **network_tx_rate**: non negative derivative of network transmitted, expressed as bits per second
- - **response_time_histogram**: histogram with linear bins (up to max)
- - **response_time_p90**: quantile of response time
- - **response_time_p95**: quantile of response time
- - **response_time_p99**: quantile of response time
+      - value: _float_ tps
+  - **network_rx_rate**: non negative derivative of network received, expressed as bits per second
+    - fields
+      - value: _int_ bps
+  - **network_tx_rate**: non negative derivative of network transmitted, expressed as bits per second
+    - fields
+      - value: _int_ bps
+  - **response_time_histogram**: histogram with linear bins (up to max)
+    - fields:
+      - value: _float_ time in milliseconds
+  - **response_time_p90**: quantile of response time
+    - fields:
+      - value: _float_ time in milliseconds
+  - **response_time_p95**: quantile of response time
+    - fields:
+      - value: _float_ time in milliseconds
+  - **response_time_p99**: quantile of response time
+    - fields:
+      - value: _float_ time in milliseconds
 
 ## Out of scope series
 
@@ -146,7 +162,7 @@ We will need to test planned limits / constraints on series cardinality for spec
 
 ## Schema Design
 
-InfluxDB. schema design will be heavily influenced [recommended schema design and data layout](https://docs.influxdata.com/InfluxDB/v1.7/concepts/schema_and_data_layout)
+InfluxDB schema design will be heavily influenced [recommended schema design and data layout](https://docs.influxdata.com/InfluxDB/v1.7/concepts/schema_and_data_layout)
 
 That is:
 
@@ -156,7 +172,15 @@ That is:
 4. don't encode data in measurement names
 5. don't put more than one piece of information in one tag
 
-## Precision
+### Shard Design
+
+In general:
+
+- Shard groups should be twice as long as the longest time range of the most frequent queries
+- Shard groups should each contain more than 100,000 points per shard group
+- Shard groups should each contain more than 1,000 points per series
+
+## Period, Retention Policy and Shard Groups
 
 A [WindowNode](https://docs.influxdata.com/kapacitor/v1.5/nodes/window_node/#sidebar) covers the time range of the aggregation at the GridNode. Historically we have used a WindowNode with a period of 15s.
 
@@ -164,12 +188,6 @@ A design goal for this epic is to write higher precision data to InfluxDB, for t
 
 - Customers expect near real time results for live floods, 15 seconds is perceptibly too long.
 - Customers want high precision data for running or recent floods, but can tolerate lower precision data for older floods.
-
-In general:
-
-- Shard groups should be twice as long as the longest time range of the most frequent queries
-- Shard groups should each contain more than 100,000 points per shard group
-- Shard groups should each contain more than 1,000 points per series
 
 We are aiming for the following period, retention policy and shard group durations:
 
