@@ -63,30 +63,30 @@ The tool should not be concerned with other tag sets related to operation of the
 
 We want to provide alternative options for the tool to emit data, aside from the current UDP streams, to increase the options available to customers for emitting data. For example, uploading a test result as a file or the ability read a file descriptor streams (stdin, stdout, stderr).
 
-## Series
+## Defined series
 
 Measurements are produced by the tool (JMeter, Gatling, Element etc), aggregated by the node (Kapacitor) and then written via a pipe line (Drain, Pipe) to the time series database (InfluxDB).
 
 Measurements are scoped to the individual test step / transaction level, and also at the test case level for any grid node. Series are the collection of data in the InfluxDB that share a measurement, tag set, and retention policy.
 
-Series can also be derived from tool / grid produced measurements, to facilitate easier/faster querying or produce transformations useful to the UI.
-
 Series cardinality are the number of unique database, measurement, tag set, and field key combinations in InfluxDB.
+
+Defined series are as follows:
 
 ### Test step series
 
-- response_time: mean of elapsed time
+- **response_time**: mean of elapsed time
   - tags:
     - label_id: _string_ sequential label ID of step
     - type: _string_ step,stepWithThinkTime, network, timeToFirstInteractive, timeToFirstByte
   - fields:
     - value: _float_ time in milliseconds
-- passed: count of passed
+- **passed**: count of passed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
     - value: _int_ total count
-- failed: count of failed
+- **failed**: count of failed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
@@ -94,30 +94,53 @@ Series cardinality are the number of unique database, measurement, tag set, and 
 
 ### Test case series
 
-- concurrency: count of active users
+- **concurrency**: count of active users
   - fields:
     - value: _int_ total count
-- network_rx: sum of network received bytes
+
+## Grid node series
+
+- **network_rx**: sum of network received bytes
   - fields:
     - value: _int_ total bytes
-- network_tx: sum of network transmitted bytes
+- **network_tx**: sum of network transmitted bytes
   - fields:
     - value: _int_ total bytes
 
-### Derived measurements
+Grid nodes (Kapacitor) is responsible for additive tag sets related to operation of the tool itself. These will include:
 
- - transaction_rate: non negative derivative expressed as transactions per second, based on sum of passed and failed measurements
-   - fields
-     - value: _float_
+  - tags:
+    - **account**: _string_ primary ID of account
+    - **flood**: _string_ sequential flood ID of account
+    - **project**: _string_ sequential project ID of account
+    - **node**: _string_ sequential node ID of grid, zero based index
+    - **grid**: _string_ sequential grid ID of grid, zero based index
+    - **region**: _string_ grid region
 
+## Derived series
 
-### Out of scope measurements
+Series can also be derived from tool / grid produced measurements, to facilitate easier/faster querying or produce transformations useful to the UI. These will be executed as continuous queries on InfluxDB
 
-Out of scope for this design document, but under consideration, are measurements with high dimensionality / cardinality, such as server side monitoring and/or tracing.
+  - **transaction_rate**: non negative derivative expressed as transactions per second, based on sum of passed and failed transactions
+     - fields
+       - value: _float_
+  - **error_rate**: non negative derivative expressed as transactions per second, based on sum of failed transactions
+    - fields
+      - value: _float_
+ - **network_rx_rate**: non negative derivative of network received, expressed as bits per second
+ - **network_tx_rate**: non negative derivative of network transmitted, expressed as bits per second
+ - **response_time_histogram**: histogram with linear bins (up to max)
+ - **response_time_p90**: quantile of response time
+ - **response_time_p95**: quantile of response time
+ - **response_time_p99**: quantile of response time
 
-Handling of these measurements will be covered in another design document and most likely include their own schema design and data management.
+## Out of scope series
 
-# Schema Design
+Out of scope for this design document, but under consideration, are series / measurements with high dimensionality / cardinality, such as server side monitoring and/or tracing.
+
+Handling of these series will be covered in another design document and most likely include their own schema design and data management.
+
+## Schema Design
 
 InfluxDB. schema design will be heavily influenced [recommended schema design and data layout](https://docs.influxdata.com/InfluxDB/v1.7/concepts/schema_and_data_layout)
 
@@ -129,51 +152,31 @@ That is:
 4. don't encode data in measurement names
 5. don't put more than one piece of information in one tag
 
-# Precision Periods
-
-We want s
+## Precision
 
 A [WindowNode](https://docs.influxdata.com/kapacitor/v1.5/nodes/window_node/#sidebar) covers the time range of the aggregation at the GridNode. Historically we have used a WindowNode with a period of 15s. For the purpose of this document, 15s is considered low precision.
 
-
-the accuracy of a measurement system is the degree of closeness of measurements of a quantity to that quantity's true value
-
-The precision of a measurement system, related to reproducibility and repeatability, is the degree to which repeated measurements under unchanged conditions show the same results
-
-There is no math for meaningfully aggregating percentiles. Once we have aggregated data at the GridNode, even if we write the percentile, the typical averaging of percentiles is completely bogus.
-
 A design goal for this epic is to write higher precision data to InfluxDB, for the following reasons:
 
-- 15s is a relatively long time to wait for results to appear in a live flood.
-- Accuracy of 15s aggregations
+- Customers expect near real time results for live floods, 15 seconds is perceptibly long.
+- Customers want high precision data for running or recent floods, and can handle lower precision data for older floods.
 
+In general:
 
-We are aiming for an LPP of:
+- Shard groups should be twice as long as the longest time range of the most frequent queries
+- Shard groups should each contain more than 100,000 points per shard group
+- Shard groups should each contain more than 1,000 points per series
 
-| Period | RP Duration | Shard Group Duration |
-|-------:|------------:|---------------------:|
-| 1s     | 1mo         | 7d                   |
-| 15s    | 12mo        | 52w                  |
+We are aiming for the following period, reternion policy and shard group durations:
 
+| Alias | Period | RP Duration | Shard Group Duration |
+|-------|-------:|------------:|---------------------:|
+| Hot   | 1s     | 1mo         | 7d                   |
+| Warm  | 15s    | 12mo        | 26w                  |
+| Cold  | 30s    | 36mo        | 52w                  |
 
-High Precision
-
-1s  1mo
-Low Precision
-15s 52w
-
-CREATE RETENTION POLICY "one_month" ON "results" DURATION 4w REPLICATION 1 DEFAULT
-CREATE RETENTION POLICY "one_year" ON "results" DURATION 52w REPLICATION 1
-
-Shard groups should be twice as long as the longest time range of the most frequent queries
-Shard groups should each contain more than 100,000 points per shard group
-Shard groups should each contain more than 1,000 points per series
-
-# Anticipated Measurements
-
-Measurements are always pre-aggregated by the node, before being written to InfluxDB. The following measurements and aggregations are anticipated in the lowest possible time window.
-
-- response_time: mean of elapsed time for a transaction
-- concurrency: max of active users
-- passed: sum of passed transactions
-- failed: sum of failed transactions
+```
+CREATE RETENTION POLICY "hot" ON "results" DURATION 4w REPLICATION 1 DEFAULT
+CREATE RETENTION POLICY "warm" ON "results" DURATION 24w REPLICATION 1
+CREATE RETENTION POLICY "cold" ON "results" DURATION 52w REPLICATION 1
+```
