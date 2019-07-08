@@ -18,44 +18,38 @@ Aggregation occurs on Grid Nodes via Kapacitor, as part of their current UDP str
 
 Further aggregation will occur on InfluxDB, as part of pipe line processing (Drain, Pipe) and continuous queries in order to maximise efficiency of write throughput, retention policy and shard management.
 
-## Transformation Functions
+## Aggregations
 
-Flux’s built-in transformation functions will transform or shape data as follows.
+We will provide the following aggregations:
 
-### Flux aggregate functions
+- [mean](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/aggregates/mean/)
+- [standard deviation](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/aggregates/stddev/)
+- [min](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/selectors/min/)
+- [max](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/selectors/max/)
+- [count](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/aggregates/count/)
+- [sum](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/aggregates/sum/)
+- [histograms](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/histogram/)
+- [quantiles](https://docs.influxdata.com/flux/v0.24/functions/built-in/transformations/aggregates/quantile/) (p90, p95 and p99)
 
-Flux aggregate functions will take values from an input table and aggregate then as follows:
-
-- The count() function outputs the number of records in each aggregated column. It counts both null and non-null records.
-
-```
-  Function type: Aggregate
-  Output data type: Integer
-  Example: 4069 passed transactions
-```
-
-Flux selector functions
-Flux selector functions return one or more records based on function logic.
-
-Aggregations such as min, max, count and sum should be 100% accurate to the original data. Examples include:
+Aggregations such as min, max, count and sum should 100% accurate. Examples include:
 
 - min response time = 2,051 ms
 - max concurrency = 1,000 users
 - count passed = 4,069 transactions
 - sum network = 492,092 bytes received
 
-These will occur on Grid Nodes via Kapacitor and be accurately written into InfluxDB.
+These aggregations will occur on Grid Nodes via Kapacitor and be accurately written into InfluxDB.
 
-Aggregations such as mean will naturally included standard error (standard deviation of its sampling distribution), and further aggregations of the same measurements will decrease accuracy and precision of results. We will write higher precision aggregates for new data (recent floods) and move to lower precision aggregates for older data (older floods). For aggregates such as mean we will also highlight standard deviation. Examples include:
+Aggregations such as the mean will include standard error (standard deviation of its sampling distribution), and further aggregations of the same measurements will decrease accuracy and precision of results.
+
+To assist with this, we will write higher precision aggregates for new data (e.g. 1s resolution for last 30 days) and move to lower precision aggregates for older data (e.g.15s resolution greater than 12 months). For aggregates such as mean we will also write standard deviation. Examples include:
 
 - mean response time = 2,324 ms over 1s period
 - stddev response time = 2,324 ms over 1s period
-- mean response time = 2,000 ms over 15s period
 
-Aggregations such as histograms will be
+Aggregations such as histograms will approximate the cumulative distribution of a data set by counting data frequencies for a list of bins.
 
-
-Aggregations such as quantiles
+Aggregations such as quantiles will write records from an input table with _values that fall within a specified quantile (e.g. 0.95) using the `estimate_tdigest` to output non-null records with values that fall within the specified quantile.
 
 ## Minimise responsibility of the tool
 
