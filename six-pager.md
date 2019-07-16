@@ -66,43 +66,56 @@ We want to provide alternative ways for the tool to emit data, aside from the cu
 
 Series are the collection of data in InfluxDB that share a measurement, tag set, and retention policy. Series names will indicate what type of aggregation has already been applied at write as a _suffix.
 
+### Naming conventions
+
+Series naming conventions should indicate:
+
+- source of the original measurement
+- unit of measurement
+- aggregation type which has been applied
+- any significant groupings by tags which has been applied to the aggregation
+
+`<measurementSource>_<unitOfMeasurement>_<aggregationType>_<totalOrByTag>`
+
+```
+concurrent_users_sum_byGrid
+throughput_bytes_perSecond_total
+passedFailed_requests_perSecond_total
+passed_requests_perSecond_byLabel
+failed_requests_perSecond_byLabel
+```
+
 Defined series are as follows:
 
 ### Test step originated series
 
-- **response_time_mean**: mean of elapsed time
+- **responseTime_milliseconds_mean_byLabelAndType**: mean of elapsed time
   - tags:
-    - label: _string_ sequential label ID of step
+    - label_id: _string_ sequential label ID of step
     - type: _string_ step, [stepWithThinkTime, network, timeToFirstByte, timeToFirstInteractive]
   - fields:
     - value: _float_ time in milliseconds
-- **response_time_max**: max of elapsed time
+- **responseTime_milliseconds_max_byLabelAndType**: max of elapsed time
   - tags: as above
   - fields:
     - value: _float_ time in milliseconds
-- **passed_count**: count of passed
+- **passed_requests_count_byLabel**: count of passed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
     - value: _int_ count passed
-- **failed_count**: count of failed
+- **failed_requests_count_byLabel**: count of failed
   - tags:
     - label_id: _string_ sequential label ID of step
   - fields:
     - value: _int_ count failed
 
-### Test case originated series
-
-- **concurrency_max**: max of active users
-  - fields:
-    - value: _int_ max users
-
 ## Grid Node originated series
 
-- **network_rx_sum**: sum of network received bytes (sourced from hydrometer)
+- **throughputReceived_bytes_perSecond_total**: sum of network received bytes (sourced from hydrometer)
   - fields:
     - value: _int_ sum bytes
-- **network_tx_sum**: sum of network transmitted bytes (sourced from hydrometer)
+- **throughputTransmitted_bytes_perSecond_total**: sum of network transmitted bytes (sourced from hydrometer)
   - fields:
     - value: _int_ sum bytes
 
@@ -116,35 +129,36 @@ Grid Nodes (Kapacitor) are responsible for additive tag sets related to operatio
     - **grid**: _string_ sequential grid ID of grid, zero based index
     - **region**: _string_ grid region
 
-## Derived series
+## Continuous queries
 
 Series can also be derived from other measurements, to facilitate easier/faster querying or produce transformations useful to the client. These will be executed as continuous queries on InfluxDB:
 
-  - **concurrency_sum_max**: the sum of the maximum number of concurrent users for the flood, grouped by grid, region
-    - fields
-      - value: _int_ sum users
-  - **transaction_rate**: non negative derivative expressed as rate (transactions per second), based on sum of passed and failed transactions
+  - **concurrent_users_sum_byGrid**: max of active users
+    - tags:
+      - grid: _string_ sequential grid ID
+    - fields:
+      - value: _int_ max users
+  - **passedFailed_requests_perSecond_total**: expressed as rate (requests per second), based on sum of passed and failed transactions
      - fields
        - value: _float_ tps
-  - **error_rate**: non negative derivative expressed as rate (transactions per second), based on sum of failed transactions
+  - **failed_requests_perSecond_total**: expressed as rate (transactions per second), based on sum of failed transactions
     - fields
       - value: _float_ tps
-  - **network_rx_rate**: non negative derivative of network received, expressed as bits per second
-    - fields
-      - value: _int_ bps
-  - **network_tx_rate**: non negative derivative of network transmitted, expressed as bits per second
-    - fields
-      - value: _int_ bps
-  - **response_time_histogram**: histogram with linear bins (up to max)
+  - **responseTime_milliseconds_histogram_byLabel**: histogram with linear bins (up to max)
+    - tags:
+      - label_id: _string_ sequential label ID of step
     - fields:
       - value: _float_ time in milliseconds
-  - **response_time_p90**: quantile of response time
+  - **responseTime_milliseconds_histogram_total**: histogram with linear bins (up to max)
     - fields:
       - value: _float_ time in milliseconds
-  - **response_time_p95**: quantile of response time
+  - **responseTime_milliseconds_p90_total**: quantile of response time
     - fields:
       - value: _float_ time in milliseconds
-  - **response_time_p99**: quantile of response time
+  - **responseTime_milliseconds_p95_total**: quantile of response time
+    - fields:
+      - value: _float_ time in milliseconds
+  - **responseTime_milliseconds_p99_total**: quantile of response time
     - fields:
       - value: _float_ time in milliseconds
 
@@ -204,15 +218,15 @@ CREATE RETENTION POLICY "hot" ON "results" DURATION 4w REPLICATION 1 DEFAULT
 CREATE RETENTION POLICY "warm" ON "results" DURATION 24w REPLICATION 1
 CREATE RETENTION POLICY "cold" ON "results" DURATION 52w REPLICATION 1
 
-CREATE CONTINUOUS QUERY "cq_15" ON "results" BEGIN
-  SELECT mean("response_time"), max()
+CREATE CONTINUOUS QUERY "cq_rollup_responseTime_15s" ON "results" BEGIN
+  SELECT mean("response_time")
   INTO "warm"."warm_results"
   FROM "results"
   GROUP BY time(15s)
 END
 
-CREATE CONTINUOUS QUERY "cq_60" ON "results" BEGIN
-  SELECT mean("response_time"), max()
+CREATE CONTINUOUS QUERY "cq_rollup_responseTime_60s" ON "results" BEGIN
+  SELECT mean("response_time")
   INTO "cold"."cold_results"
   FROM "results"
   GROUP BY time(60s)
